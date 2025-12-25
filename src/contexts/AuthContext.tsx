@@ -1,66 +1,73 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
-import { UserRole, currentUser } from '@/lib/mockData';
+import React, { useEffect, ReactNode } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { useAuthStore, AuthUser } from "@/stores/authStore";
+import api from "@/lib/axios";
+import { UserRole } from "@/lib/mockData";
 
-interface AuthUser {
-  id: string;
-  role: UserRole;
-  name: string;
-  avatar: string;
+interface LoginResponse {
+  token: string;
+  user: {
+    id: number | string;
+    full_name: string;
+    role: string;
+    avatar?: string;
+  };
 }
 
 interface AuthContextType {
   user: AuthUser | null;
-  login: (role: UserRole) => void;
+  login: (phone: string, password: string) => Promise<void>;
   logout: () => void;
-  switchRole: (role: UserRole) => void;
+  isLoading: boolean;
+  isAuthenticated: boolean;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
+// AuthProvider is now primarily a logical wrapper for initialization
+// and compatibility with the existing App structure.
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(currentUser);
+  const { checkAuth } = useAuthStore();
 
-  const login = (role: UserRole) => {
-    if (role === 'admin') {
-      setUser({
-        id: 'admin1',
-        role: 'admin',
-        name: 'Admin User',
-        avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop',
-      });
-    } else {
-      setUser(currentUser);
-    }
-  };
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
 
-  const logout = () => {
-    setUser(null);
-  };
-
-  const switchRole = (role: UserRole) => {
-    if (role === 'admin') {
-      setUser({
-        id: 'admin1',
-        role: 'admin',
-        name: 'Admin User',
-        avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop',
-      });
-    } else {
-      setUser(currentUser);
-    }
-  };
-
-  return (
-    <AuthContext.Provider value={{ user, login, logout, switchRole }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <>{children}</>;
 }
 
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
+export function useAuth(): AuthContextType {
+  const { user, setUser, setToken, logout, token } = useAuthStore();
+  
+  const loginMutation = useMutation({
+    mutationFn: async ({ phone, password }: { phone: string; password: string }) => {
+      const response = await api.post<LoginResponse>('/auth/login', { phone, password });
+      return response.data;
+    },
+    onSuccess: (data) => {
+      const { token, user: apiUser } = data;
+      const authUser: AuthUser = {
+        id: apiUser.id.toString(),
+        name: apiUser.full_name,
+        role: apiUser.role as UserRole,
+        avatar: apiUser.avatar || "",
+      };
+      setToken(token);
+      setUser(authUser);
+    },
+  });
+
+  const login = async (phone: string, password: string) => {
+    await loginMutation.mutateAsync({ phone, password });
+  };
+
+  // With Zustand persist, state is hydrated synchronously from localStorage by default.
+  // So we don't need an initial loading state like in the useState version.
+  // isLoading here reflects the login mutation status.
+  
+  return {
+    user,
+    login,
+    logout,
+    isLoading: loginMutation.isPending,
+    isAuthenticated: !!user && !!token,
+  };
 }

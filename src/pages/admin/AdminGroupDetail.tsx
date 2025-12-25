@@ -1,25 +1,55 @@
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Users, UserPlus, UserMinus, Pencil } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft, UserPlus, UserMinus, Pencil, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DataTable } from '@/components/ui/data-table';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { LevelBadge } from '@/components/ui/level-badge';
 import { RoleBadge } from '@/components/ui/role-badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { 
-  getGroupById, 
-  getStudentsByGroupId, 
-  getTeacherById,
-  Student 
-} from '@/lib/mockData';
+import api from '@/lib/axios';
+
+interface Teacher {
+  id: number;
+  name: string;
+  avatar: string;
+}
+
+interface Student {
+  id: number;
+  name: string;
+  avatar: string;
+  phone: string;
+  status: string;
+  attendance_rate: number;
+}
+
+interface GroupDetail {
+  id: number;
+  name: string;
+  main_teacher: Teacher | null;
+  assistant_teacher: Teacher | null;
+  students: Student[];
+}
 
 export function AdminGroupDetail() {
   const { groupId } = useParams<{ groupId: string }>();
-  
-  const group = getGroupById(groupId || '');
-  const students = getStudentsByGroupId(groupId || '');
-  const mainTeacher = getTeacherById(group?.mainTeacherId || '');
-  const assistantTeacher = group?.assistantTeacherId ? getTeacherById(group.assistantTeacherId) : null;
+
+  const { data: group, isLoading } = useQuery({
+    queryKey: ['adminGroupDetail', groupId],
+    queryFn: async () => {
+      const response = await api.get<GroupDetail>(`/admin/groups/${groupId}`);
+      return response.data;
+    },
+    enabled: !!groupId,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[500px]">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!group) {
     return (
@@ -31,8 +61,6 @@ export function AdminGroupDetail() {
       </div>
     );
   }
-
-  const capacityPercent = (group.studentIds.length / group.maxStudents) * 100;
 
   const studentColumns = [
     {
@@ -63,9 +91,9 @@ export function AdminGroupDetail() {
       render: (student: Student) => <StatusBadge status={student.status} />,
     },
     {
-      key: 'attendance',
+      key: 'attendance_rate',
       header: 'Attendance',
-      render: (student: Student) => <span>{student.attendancePercent}%</span>,
+      render: (student: Student) => <span>{student.attendance_rate}%</span>,
     },
     {
       key: 'actions',
@@ -90,7 +118,6 @@ export function AdminGroupDetail() {
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h1 className="page-title">{group.name}</h1>
-            <LevelBadge level={group.level} />
           </div>
           <p className="page-subtitle">Manage group settings and students</p>
         </div>
@@ -104,21 +131,12 @@ export function AdminGroupDetail() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         {/* Capacity */}
         <div className="content-card">
-          <h3 className="text-sm font-medium text-muted-foreground mb-3">Capacity</h3>
+          <h3 className="text-sm font-medium text-muted-foreground mb-3">Students</h3>
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-2xl font-semibold">{group.studentIds.length}</span>
-                <span className="text-muted-foreground">/ {group.maxStudents}</span>
-              </div>
-              <div className="h-2 bg-muted rounded-full overflow-hidden">
-                <div 
-                  className={`h-full rounded-full transition-all ${
-                    capacityPercent >= 90 ? 'bg-destructive' : 
-                    capacityPercent >= 70 ? 'bg-warning' : 'bg-success'
-                  }`}
-                  style={{ width: `${capacityPercent}%` }}
-                />
+                <span className="text-2xl font-semibold">{group.students.length}</span>
+                <span className="text-muted-foreground">Students</span>
               </div>
             </div>
           </div>
@@ -127,14 +145,14 @@ export function AdminGroupDetail() {
         {/* Main Teacher */}
         <div className="content-card">
           <h3 className="text-sm font-medium text-muted-foreground mb-3">Main Teacher</h3>
-          {mainTeacher ? (
+          {group.main_teacher ? (
             <div className="flex items-center gap-3">
               <Avatar className="w-10 h-10">
-                <AvatarImage src={mainTeacher.avatar} alt={mainTeacher.name} />
-                <AvatarFallback>{mainTeacher.name.charAt(0)}</AvatarFallback>
+                <AvatarImage src={group.main_teacher.avatar} alt={group.main_teacher.name} />
+                <AvatarFallback>{group.main_teacher.name.charAt(0)}</AvatarFallback>
               </Avatar>
               <div>
-                <p className="font-medium text-foreground">{mainTeacher.name}</p>
+                <p className="font-medium text-foreground">{group.main_teacher.name}</p>
                 <RoleBadge role="main" />
               </div>
             </div>
@@ -146,14 +164,14 @@ export function AdminGroupDetail() {
         {/* Assistant Teacher */}
         <div className="content-card">
           <h3 className="text-sm font-medium text-muted-foreground mb-3">Assistant Teacher</h3>
-          {assistantTeacher ? (
+          {group.assistant_teacher ? (
             <div className="flex items-center gap-3">
               <Avatar className="w-10 h-10">
-                <AvatarImage src={assistantTeacher.avatar} alt={assistantTeacher.name} />
-                <AvatarFallback>{assistantTeacher.name.charAt(0)}</AvatarFallback>
+                <AvatarImage src={group.assistant_teacher.avatar} alt={group.assistant_teacher.name} />
+                <AvatarFallback>{group.assistant_teacher.name.charAt(0)}</AvatarFallback>
               </Avatar>
               <div>
-                <p className="font-medium text-foreground">{assistantTeacher.name}</p>
+                <p className="font-medium text-foreground">{group.assistant_teacher.name}</p>
                 <RoleBadge role="assistant" />
               </div>
             </div>
@@ -172,15 +190,15 @@ export function AdminGroupDetail() {
       <div className="content-card">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-foreground">Students</h2>
-          <Button className="gap-2" disabled={group.studentIds.length >= group.maxStudents}>
+          <Button className="gap-2">
             <UserPlus className="w-4 h-4" />
             Add Student
           </Button>
         </div>
         <DataTable
           columns={studentColumns}
-          data={students}
-          keyExtractor={(student) => student.id}
+          data={group.students}
+          keyExtractor={(student) => student.id.toString()}
           emptyMessage="No students in this group."
         />
       </div>

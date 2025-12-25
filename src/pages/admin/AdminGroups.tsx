@@ -1,23 +1,134 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Users, Plus, Pencil, Eye } from 'lucide-react';
-import { DataTable } from '@/components/ui/data-table';
-import { LevelBadge } from '@/components/ui/level-badge';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { groups, teachers, getTeacherById, Group, Level } from '@/lib/mockData';
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Users, Plus, Pencil, Eye, Loader2 } from "lucide-react";
+import { DataTable } from "@/components/ui/data-table";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import api from "@/lib/axios";
+
+interface GroupListItem {
+  id: number;
+  name: string;
+  main_teacher: string;
+  assistant_teacher: string;
+  student_count: string;
+}
+
+interface Teacher {
+  id: number;
+  full_name: string;
+}
+
+interface TeacherResponse {
+  teachers: Teacher[];
+  assistants: Teacher[];
+}
+
+interface CreateGroupData {
+  name: string;
+  level: string;
+  main_teacher_id: string;
+  assistant_teacher_id?: string;
+}
 
 export function AdminGroups() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newGroup, setNewGroup] = useState<CreateGroupData>({
+    name: "",
+    level: "",
+    main_teacher_id: "",
+    assistant_teacher_id: "",
+  });
+
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const { data: groups, isLoading: groupsLoading } = useQuery({
+    queryKey: ["adminGroups"],
+    queryFn: async () => {
+      const response = await api.get<GroupListItem[]>("/admin/groups");
+      return response.data;
+    },
+  });
+
+  const { data: teachersData } = useQuery({
+    queryKey: ["adminTeachers"],
+    queryFn: async () => {
+      const response = await api.get<TeacherResponse>(
+        "/admin/teacher-and-assistants"
+      );
+      return response.data;
+    },
+    enabled: isCreateOpen, // Only fetch when dialog is open
+  });
+
+  const createGroupMutation = useMutation({
+    mutationFn: async (data: CreateGroupData) => {
+      await api.post("/admin/groups", {
+        ...data,
+        main_teacher_id: Number(data.main_teacher_id),
+        assistant_teacher_id: data.assistant_teacher_id
+          ? Number(data.assistant_teacher_id)
+          : null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["adminGroups"] });
+      setIsCreateOpen(false);
+      setNewGroup({
+        name: "",
+        level: "",
+        main_teacher_id: "",
+        assistant_teacher_id: "",
+      });
+      toast({
+        title: "Success",
+        description: "Group created successfully",
+      });
+    },
+    onError: () => {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to create group",
+      });
+    },
+  });
+
+  const handleCreateGroup = () => {
+    if (!newGroup.name || !newGroup.level || !newGroup.main_teacher_id) {
+      toast({
+        variant: "destructive",
+        title: "Validation Error",
+        description: "Please fill in all required fields",
+      });
+      return;
+    }
+    createGroupMutation.mutate(newGroup);
+  };
 
   const columns = [
     {
-      key: 'name',
-      header: 'Group Name',
-      render: (group: Group) => (
+      key: "name",
+      header: "Group Name",
+      render: (group: GroupListItem) => (
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
             <Users className="w-5 h-5 text-primary" />
@@ -27,53 +138,34 @@ export function AdminGroups() {
       ),
     },
     {
-      key: 'level',
-      header: 'Level',
-      render: (group: Group) => <LevelBadge level={group.level} />,
-    },
-    {
-      key: 'students',
-      header: 'Students',
-      render: (group: Group) => (
+      key: "students",
+      header: "Students",
+      render: (group: GroupListItem) => (
         <div className="flex items-center gap-2">
-          <div className="w-20 h-2 bg-muted rounded-full overflow-hidden">
-            <div 
-              className={`h-full rounded-full transition-all ${
-                group.studentIds.length >= group.maxStudents * 0.9 
-                  ? 'bg-destructive' 
-                  : group.studentIds.length >= group.maxStudents * 0.7 
-                    ? 'bg-warning' 
-                    : 'bg-success'
-              }`}
-              style={{ width: `${(group.studentIds.length / group.maxStudents) * 100}%` }}
-            />
-          </div>
-          <span className="text-sm text-muted-foreground">
-            {group.studentIds.length}/{group.maxStudents}
-          </span>
+          <span className="text-sm font-medium">{group.student_count}</span>
         </div>
       ),
     },
     {
-      key: 'mainTeacher',
-      header: 'Main Teacher',
-      render: (group: Group) => {
-        const teacher = getTeacherById(group.mainTeacherId);
-        return <span>{teacher?.name || '-'}</span>;
-      },
+      key: "main_teacher",
+      header: "Main Teacher",
+      render: (group: GroupListItem) => (
+        <span>{group.main_teacher || "-"}</span>
+      ),
     },
     {
-      key: 'assistantTeacher',
-      header: 'Assistant',
-      render: (group: Group) => {
-        const teacher = group.assistantTeacherId ? getTeacherById(group.assistantTeacherId) : null;
-        return <span className="text-muted-foreground">{teacher?.name || '-'}</span>;
-      },
+      key: "assistant_teacher",
+      header: "Assistant",
+      render: (group: GroupListItem) => (
+        <span className="text-muted-foreground">
+          {group.assistant_teacher || "-"}
+        </span>
+      ),
     },
     {
-      key: 'actions',
-      header: '',
-      render: (group: Group) => (
+      key: "actions",
+      header: "",
+      render: (group: GroupListItem) => (
         <div className="flex gap-2">
           <Link to={`/admin/groups/${group.id}`}>
             <Button variant="outline" size="sm" className="gap-1">
@@ -89,6 +181,14 @@ export function AdminGroups() {
       ),
     },
   ];
+
+  if (groupsLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[500px]">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="animate-fade-in">
@@ -111,11 +211,23 @@ export function AdminGroups() {
             <div className="space-y-4 pt-4">
               <div className="space-y-2">
                 <Label htmlFor="name">Group Name</Label>
-                <Input id="name" placeholder="e.g., Morning Beginners A" />
+                <Input
+                  id="name"
+                  placeholder="e.g., Morning Beginners A"
+                  value={newGroup.name}
+                  onChange={(e) =>
+                    setNewGroup({ ...newGroup, name: e.target.value })
+                  }
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="level">Level</Label>
-                <Select>
+                <Select
+                  value={newGroup.level}
+                  onValueChange={(value) =>
+                    setNewGroup({ ...newGroup, level: value })
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select level" />
                   </SelectTrigger>
@@ -123,48 +235,79 @@ export function AdminGroups() {
                     <SelectItem value="Beginner">Beginner</SelectItem>
                     <SelectItem value="Elementary">Elementary</SelectItem>
                     <SelectItem value="Intermediate">Intermediate</SelectItem>
-                    <SelectItem value="Upper-Intermediate">Upper-Intermediate</SelectItem>
+                    <SelectItem value="Upper-Intermediate">
+                      Upper-Intermediate
+                    </SelectItem>
                     <SelectItem value="Advanced">Advanced</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="mainTeacher">Main Teacher</Label>
-                <Select>
+                <Select
+                  value={newGroup.main_teacher_id}
+                  onValueChange={(value) =>
+                    setNewGroup({ ...newGroup, main_teacher_id: value })
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select teacher" />
                   </SelectTrigger>
                   <SelectContent>
-                    {teachers.filter(t => t.role === 'main').map((teacher) => (
-                      <SelectItem key={teacher.id} value={teacher.id}>
-                        {teacher.name}
+                    {teachersData?.teachers.map((teacher) => (
+                      <SelectItem
+                        key={teacher.id}
+                        value={teacher.id.toString()}
+                      >
+                        {teacher.full_name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="assistantTeacher">Assistant Teacher (Optional)</Label>
-                <Select>
+                <Label htmlFor="assistantTeacher">
+                  Assistant Teacher (Optional)
+                </Label>
+                <Select
+                  value={newGroup.assistant_teacher_id}
+                  onValueChange={(value) =>
+                    setNewGroup({
+                      ...newGroup,
+                      assistant_teacher_id: value === "none" ? "" : value,
+                    })
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select assistant" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">None</SelectItem>
-                    {teachers.filter(t => t.role === 'assistant').map((teacher) => (
-                      <SelectItem key={teacher.id} value={teacher.id}>
-                        {teacher.name}
+                    {teachersData?.assistants.map((teacher) => (
+                      <SelectItem
+                        key={teacher.id}
+                        value={teacher.id.toString()}
+                      >
+                        {teacher.full_name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex justify-end gap-2 pt-4">
-                <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setIsCreateOpen(false)}
+                >
                   Cancel
                 </Button>
-                <Button onClick={() => setIsCreateOpen(false)}>
-                  Create Group
+                <Button
+                  onClick={handleCreateGroup}
+                  disabled={createGroupMutation.isPending}
+                >
+                  {createGroupMutation.isPending
+                    ? "Creating..."
+                    : "Create Group"}
                 </Button>
               </div>
             </div>
@@ -175,8 +318,8 @@ export function AdminGroups() {
       <div className="content-card">
         <DataTable
           columns={columns}
-          data={groups}
-          keyExtractor={(group) => group.id}
+          data={groups || []}
+          keyExtractor={(group) => group.id.toString()}
           emptyMessage="No groups created yet."
         />
       </div>

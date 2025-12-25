@@ -7,6 +7,8 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import Login from "./pages/Login";
+import { ProtectedRoute } from "./components/ProtectedRoute";
 
 // Teacher Pages
 import { TeacherDashboard } from "./pages/teacher/TeacherDashboard";
@@ -27,7 +29,16 @@ import { AdminTeachers } from "./pages/admin/AdminTeachers";
 import { AdminPayments } from "./pages/admin/AdminPayments";
 import { AdminSettings } from "./pages/admin/AdminSettings";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      refetchOnMount: false,
+      refetchOnReconnect: false,
+      retry: false,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -38,28 +49,36 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Index />} />
-            
+            <Route path="/login" element={<Login />} />
+
             {/* Teacher Routes */}
-            <Route path="/teacher" element={<DashboardLayout />}>
-              <Route index element={<TeacherDashboard />} />
-              <Route path="groups" element={<TeacherGroups />} />
-              <Route path="groups/:groupId" element={<GroupDetail />} />
-              <Route path="assignments" element={<TeacherAssignments />} />
-              <Route path="assignments/:assignmentId" element={<AssignmentReview />} />
-              <Route path="attendance" element={<TeacherAttendance />} />
-              <Route path="grades" element={<TeacherGrades />} />
+            <Route element={<ProtectedRoute allowedRoles={["teacher"]} />}>
+              <Route path="/teacher" element={<DashboardLayout />}>
+                <Route index element={<TeacherDashboard />} />
+                <Route path="groups" element={<TeacherGroups />} />
+                <Route path="groups/:groupId" element={<GroupDetail />} />
+                <Route path="assignments" element={<TeacherAssignments />} />
+                <Route
+                  path="assignments/:assignmentId"
+                  element={<AssignmentReview />}
+                />
+                <Route path="attendance" element={<TeacherAttendance />} />
+                <Route path="grades" element={<TeacherGrades />} />
+              </Route>
             </Route>
 
             {/* Admin Routes */}
-            <Route path="/admin" element={<DashboardLayout />}>
-              <Route index element={<AdminDashboard />} />
-              <Route path="groups" element={<AdminGroups />} />
-              <Route path="groups/:groupId" element={<AdminGroupDetail />} />
-              <Route path="new-students" element={<AdminNewStudents />} />
-              <Route path="students" element={<AdminStudents />} />
-              <Route path="teachers" element={<AdminTeachers />} />
-              <Route path="payments" element={<AdminPayments />} />
-              <Route path="settings" element={<AdminSettings />} />
+            <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
+              <Route path="/admin" element={<DashboardLayout />}>
+                <Route index element={<AdminDashboard />} />
+                <Route path="groups" element={<AdminGroups />} />
+                <Route path="groups/:groupId" element={<AdminGroupDetail />} />
+                <Route path="new-students" element={<AdminNewStudents />} />
+                <Route path="students" element={<AdminStudents />} />
+                <Route path="teachers" element={<AdminTeachers />} />
+                <Route path="payments" element={<AdminPayments />} />
+                <Route path="settings" element={<AdminSettings />} />
+              </Route>
             </Route>
 
             <Route path="*" element={<NotFound />} />
