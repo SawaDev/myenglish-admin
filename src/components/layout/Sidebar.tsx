@@ -37,15 +37,15 @@ const adminNavItems: NavItem[] = [
   { label: 'Students', path: '/admin/students', icon: GraduationCap },
   { label: 'Teachers', path: '/admin/teachers', icon: BookOpen },
   { label: 'Payments', path: '/admin/payments', icon: CreditCard },
-  { label: 'Settings', path: '/admin/settings', icon: Settings },
+  // { label: 'Settings', path: '/admin/settings', icon: Settings },
 ];
 
 export function Sidebar() {
   const { user, logout } = useAuth();
   const location = useLocation();
   
-  const navItems = user?.role === 'admin' ? adminNavItems : teacherNavItems;
-  const basePath = user?.role === 'admin' ? '/admin' : '/teacher';
+  const navItems = user?.role === 'Admin' ? adminNavItems : teacherNavItems;
+  const basePath = user?.role === 'Admin' ? '/admin' : '/teacher';
 
   const isActive = (path: string) => {
     if (path === basePath) {

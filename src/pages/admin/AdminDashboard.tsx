@@ -34,6 +34,11 @@ interface NewStudent {
   avatar?: string;
 }
 
+interface NewStudentsResponse {
+  new_students: NewStudent[];
+  students_without_group: NewStudent[];
+}
+
 export function AdminDashboard() {
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ["adminStats"],
@@ -43,13 +48,15 @@ export function AdminDashboard() {
     },
   });
 
-  const { data: newStudents, isLoading: studentsLoading } = useQuery({
+  const { data: studentsData, isLoading: studentsLoading } = useQuery({
     queryKey: ["newStudents"],
     queryFn: async () => {
-      const response = await api.get<NewStudent[]>("/admin/new-students");
+      const response = await api.get<NewStudentsResponse>("/admin/new-students");
       return response.data;
     },
   });
+
+  const newStudents = studentsData?.new_students || [];
 
   const newStudentColumns = [
     {
@@ -206,7 +213,7 @@ export function AdminDashboard() {
         </div>
         <DataTable
           columns={newStudentColumns}
-          data={newStudents?.slice(0, 5) || []}
+          data={newStudents.slice(0, 5)}
           keyExtractor={(student) => student.id.toString()}
           emptyMessage="No new registrations"
         />

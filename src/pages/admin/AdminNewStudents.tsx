@@ -1,42 +1,158 @@
-import { useState } from 'react';
-import { UserPlus, Check } from 'lucide-react';
+import { useMemo, useState } from "react";
+import { UserPlus, Check, Plus, Loader2 } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DataTable } from '@/components/ui/data-table';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { getNewStudents, groups, Student, Group } from '@/lib/mockData';
-import { toast } from '@/hooks/use-toast';
+import { StudentDialog } from '@/components/admin/StudentDialog';
+import { useToast } from '@/hooks/use-toast';
+import api from '@/lib/axios';
+import { z } from "zod";
+
+const activateSchema = z.object({
+  studentId: z.number().positive("Student is required"),
+  groupId: z.string().min(1, "Group is required"),
+  level: z.string().min(1, "Level is required"),
+});
+
+interface NewStudent {
+  id: number;
+  full_name: string;
+  phone: string;
+  email: string;
+  status: string;
+  created_at: string;
+  avatar_url?: string;
+}
+
+interface NewStudentsResponse {
+  new_students: NewStudent[];
+  students_without_group: NewStudent[];
+}
+
+interface GroupListItem {
+  id: number;
+  name: string;
+  level: string;
+  student_count: string;
+}
 
 export function AdminNewStudents() {
-  const newStudents = getNewStudents();
-  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [selectedStudent, setSelectedStudent] = useState<NewStudent | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string>('');
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedLevel, setSelectedLevel] = useState<string>('');
+  const [isActivateOpen, setIsActivateOpen] = useState(false);
+  const [isStudentDialogOpen, setIsStudentDialogOpen] = useState(false);
+  const [activateTouched, setActivateTouched] = useState<{ group: boolean }>({ group: false });
 
-  const availableGroups = groups.filter(g => g.studentIds.length < g.maxStudents);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const { data: studentsData, isLoading: studentsLoading } = useQuery({
+    queryKey: ['newStudents'],
+    queryFn: async () => {
+      const response = await api.get<NewStudentsResponse>('/admin/new-students');
+      return response.data;
+    },
+  });
+
+  const { data: groups } = useQuery({
+    queryKey: ['adminGroups'],
+    queryFn: async () => {
+      const response = await api.get<GroupListItem[]>('/admin/groups');
+      return response.data;
+    },
+  });
+
+  const activateMutation = useMutation({
+    mutationFn: async ({ studentId, groupId, level }: { studentId: number; groupId: number; level: string }) => {
+      await api.post('/admin/activate-student', {
+        student_id: studentId,
+        group_id: groupId,
+        level: level,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['newStudents'] });
+      queryClient.invalidateQueries({ queryKey: ['adminStudents'] });
+      queryClient.invalidateQueries({ queryKey: ['adminGroups'] });
+      setIsActivateOpen(false);
+      setSelectedStudent(null);
+      setSelectedGroupId('');
+      setSelectedLevel('');
+      toast({
+        title: "Student Activated",
+        description: "Student has been activated and added to the group successfully.",
+      });
+    },
+    onError: () => {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to activate student. Please check if all fields are filled.",
+      });
+    },
+  });
+
+  const activateValidation = useMemo(() => {
+    return activateSchema.safeParse({
+      studentId: selectedStudent?.id ?? 0,
+      groupId: selectedGroupId,
+      level: selectedLevel,
+    });
+  }, [selectedStudent, selectedGroupId, selectedLevel]);
+
+  const activateErrors = useMemo(() => {
+    if (activateValidation.success) return { group: "" };
+    const groupMsg = activateValidation.error.issues.find((i) => i.path[0] === "groupId")?.message ?? "";
+    return { group: groupMsg };
+  }, [activateValidation]);
+
+  const isActivateValid = activateValidation.success;
+  const isActivating = activateMutation.isPending;
+  const isActivateDisabled = !isActivateValid || isActivating;
 
   const handleActivate = () => {
-    if (!selectedStudent || !selectedGroupId) return;
-    
-    toast({
-      title: "Student Activated",
-      description: `${selectedStudent.name} has been added to the group.`,
+    if (!isActivateValid) {
+      setActivateTouched({ group: true });
+      toast({
+        variant: "destructive",
+        title: "Validation Error",
+        description: "Please fix the highlighted fields",
+      });
+      return;
+    }
+    activateMutation.mutate({
+      studentId: selectedStudent!.id,
+      groupId: Number(selectedGroupId),
+      level: selectedLevel,
     });
-    setIsDialogOpen(false);
-    setSelectedStudent(null);
-    setSelectedGroupId('');
   };
+
+  const handleGroupChange = (groupId: string) => {
+    if (!activateTouched.group) setActivateTouched({ group: true });
+    setSelectedGroupId(groupId);
+    const selectedGroup = groups?.find(g => g.id.toString() === groupId);
+    if (selectedGroup) {
+      setSelectedLevel(selectedGroup.level);
+    } else {
+      setSelectedLevel('');
+    }
+  };
+
+  const newStudents = studentsData?.new_students || [];
 
   const columns = [
     {
       key: 'avatar',
       header: '',
-      render: (student: Student) => (
+      render: (student: NewStudent) => (
         <Avatar className="w-10 h-10">
-          <AvatarImage src={student.avatar} alt={student.name} />
-          <AvatarFallback>{student.name.charAt(0)}</AvatarFallback>
+          <AvatarImage src={student.avatar_url} alt={student.full_name} />
+          <AvatarFallback>{student.full_name?.charAt(0) || 'S'}</AvatarFallback>
         </Avatar>
       ),
       className: 'w-14',
@@ -44,9 +160,9 @@ export function AdminNewStudents() {
     {
       key: 'name',
       header: 'Full Name',
-      render: (student: Student) => (
+      render: (student: NewStudent) => (
         <div>
-          <span className="font-medium text-foreground">{student.name}</span>
+          <span className="font-medium text-foreground">{student.full_name}</span>
           <p className="text-sm text-muted-foreground">{student.email}</p>
         </div>
       ),
@@ -56,10 +172,10 @@ export function AdminNewStudents() {
       header: 'Phone',
     },
     {
-      key: 'registrationDate',
+      key: 'created_at',
       header: 'Registration Date',
-      render: (student: Student) => (
-        <span>{new Date(student.registrationDate).toLocaleDateString()}</span>
+      render: (student: NewStudent) => (
+        <span>{new Date(student.created_at).toLocaleDateString()}</span>
       ),
     },
     {
@@ -70,97 +186,44 @@ export function AdminNewStudents() {
     {
       key: 'actions',
       header: '',
-      render: (student: Student) => (
-        <Dialog open={isDialogOpen && selectedStudent?.id === student.id} onOpenChange={(open) => {
-          setIsDialogOpen(open);
-          if (open) setSelectedStudent(student);
-          else {
-            setSelectedStudent(null);
-            setSelectedGroupId('');
-          }
-        }}>
-          <DialogTrigger asChild>
-            <Button className="gap-2">
-              <UserPlus className="w-4 h-4" />
-              Activate
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Activate Student</DialogTitle>
-            </DialogHeader>
-            <div className="pt-4">
-              <div className="flex items-center gap-3 mb-6 p-4 bg-muted/50 rounded-lg">
-                <Avatar className="w-12 h-12">
-                  <AvatarImage src={student.avatar} alt={student.name} />
-                  <AvatarFallback>{student.name.charAt(0)}</AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="font-medium text-foreground">{student.name}</p>
-                  <p className="text-sm text-muted-foreground">{student.phone}</p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    Select Group
-                  </label>
-                  <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose a group" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableGroups.length === 0 ? (
-                        <div className="p-2 text-sm text-muted-foreground text-center">
-                          No groups with available spots
-                        </div>
-                      ) : (
-                        availableGroups.map((group) => (
-                          <SelectItem key={group.id} value={group.id}>
-                            <div className="flex items-center justify-between w-full">
-                              <span>{group.name}</span>
-                              <span className="text-xs text-muted-foreground ml-2">
-                                ({group.studentIds.length}/{group.maxStudents})
-                              </span>
-                            </div>
-                          </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <p className="text-sm text-muted-foreground">
-                  The student will be activated and a teacher will be auto-assigned based on the selected group.
-                </p>
-
-                <div className="flex justify-end gap-2 pt-4">
-                  <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button 
-                    onClick={handleActivate}
-                    disabled={!selectedGroupId}
-                    className="gap-2"
-                  >
-                    <Check className="w-4 h-4" />
-                    Activate Student
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+      render: (student: NewStudent) => (
+        <Button 
+          className="gap-2" 
+          size="sm"
+          onClick={() => {
+            setSelectedStudent(student);
+            setIsActivateOpen(true);
+            setSelectedGroupId("");
+            setSelectedLevel("");
+            setActivateTouched({ group: false });
+          }}
+        >
+          <UserPlus className="w-4 h-4" />
+          Activate
+        </Button>
       ),
     },
   ];
 
+  if (studentsLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[500px]">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fade-in">
-      <div className="page-header">
-        <h1 className="page-title">New Students</h1>
-        <p className="page-subtitle">Review and activate new student registrations</p>
+      <div className="page-header flex items-center justify-between">
+        <div>
+          <h1 className="page-title">New Students</h1>
+          <p className="page-subtitle">Review and activate new student registrations</p>
+        </div>
+        <Button className="gap-2" onClick={() => setIsStudentDialogOpen(true)}>
+          <Plus className="w-4 h-4" />
+          Add New Student
+        </Button>
       </div>
 
       {/* Info Banner */}
@@ -184,10 +247,111 @@ export function AdminNewStudents() {
         <DataTable
           columns={columns}
           data={newStudents}
-          keyExtractor={(student) => student.id}
+          keyExtractor={(student) => student.id.toString()}
           emptyMessage="No new students waiting for activation"
         />
       </div>
+
+      {/* Activate Dialog */}
+      <Dialog open={isActivateOpen} onOpenChange={(open) => {
+          if (isActivating) return;
+          setIsActivateOpen(open);
+          if (!open) {
+              setSelectedGroupId('');
+              setSelectedLevel('');
+              setSelectedStudent(null);
+              setActivateTouched({ group: false });
+          }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Activate Student</DialogTitle>
+          </DialogHeader>
+          {selectedStudent && (
+            <div className="pt-4">
+              <div className="flex items-center gap-3 mb-6 p-4 bg-muted/50 rounded-lg">
+                <Avatar className="w-12 h-12">
+                  <AvatarImage src={selectedStudent.avatar_url} alt={selectedStudent.full_name} />
+                  <AvatarFallback>{selectedStudent.full_name?.charAt(0) || 'S'}</AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="font-medium text-foreground">{selectedStudent.full_name}</p>
+                  <p className="text-sm text-muted-foreground">{selectedStudent.phone}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">
+                    Select Group
+                  </label>
+                  <Select
+                    value={selectedGroupId}
+                    onValueChange={handleGroupChange}
+                    disabled={isActivating}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a group" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {!groups || groups.length === 0 ? (
+                        <div className="p-2 text-sm text-muted-foreground text-center">
+                          No groups available
+                        </div>
+                      ) : (
+                        groups.map((group) => (
+                          <SelectItem key={group.id} value={group.id.toString()}>
+                            <div className="flex items-center justify-between w-full">
+                              <span>{group.name}</span>
+                              <span className="text-xs text-muted-foreground ml-2">
+                                ({group.level} • {group.student_count} students)
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {activateTouched.group && activateErrors.group && (
+                    <p className="text-sm text-destructive">{activateErrors.group}</p>
+                  )}
+                </div>
+
+                {selectedLevel && (
+                  <div className="bg-primary/5 border border-primary/10 rounded-lg p-3">
+                    <p className="text-sm text-muted-foreground">
+                      Group Level: <span className="font-semibold text-foreground">{selectedLevel}</span>
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsActivateOpen(false)}
+                    disabled={isActivating}
+                  >
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={handleActivate}
+                    disabled={isActivateDisabled}
+                    className="gap-2"
+                  >
+                    {isActivating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    Activate Student
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <StudentDialog
+        isOpen={isStudentDialogOpen}
+        onClose={() => setIsStudentDialogOpen(false)}
+      />
     </div>
   );
 }

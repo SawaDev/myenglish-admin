@@ -52,7 +52,7 @@ const App = () => (
             <Route path="/login" element={<Login />} />
 
             {/* Teacher Routes */}
-            <Route element={<ProtectedRoute allowedRoles={["teacher"]} />}>
+            <Route element={<ProtectedRoute allowedRoles={["Teacher"]} />}>
               <Route path="/teacher" element={<DashboardLayout />}>
                 <Route index element={<TeacherDashboard />} />
                 <Route path="groups" element={<TeacherGroups />} />
@@ -68,7 +68,7 @@ const App = () => (
             </Route>
 
             {/* Admin Routes */}
-            <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
+            <Route element={<ProtectedRoute allowedRoles={["Admin"]} />}>
               <Route path="/admin" element={<DashboardLayout />}>
                 <Route index element={<AdminDashboard />} />
                 <Route path="groups" element={<AdminGroups />} />

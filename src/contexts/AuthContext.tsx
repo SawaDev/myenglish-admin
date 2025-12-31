@@ -1,4 +1,4 @@
-import React, { useEffect, ReactNode } from "react";
+import React, { useEffect, ReactNode, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useAuthStore, AuthUser } from "@/stores/authStore";
 import api from "@/lib/axios";
@@ -22,10 +22,8 @@ interface AuthContextType {
   isAuthenticated: boolean;
 }
 
-// AuthProvider is now primarily a logical wrapper for initialization
-// and compatibility with the existing App structure.
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { checkAuth } = useAuthStore();
+  const checkAuth = useAuthStore((state) => state.checkAuth);
 
   useEffect(() => {
     checkAuth();
@@ -35,7 +33,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 export function useAuth(): AuthContextType {
-  const { user, setUser, setToken, logout, token } = useAuthStore();
+  const user = useAuthStore((state) => state.user);
+  const token = useAuthStore((state) => state.token);
+  const setUser = useAuthStore((state) => state.setUser);
+  const setToken = useAuthStore((state) => state.setToken);
+  const logout = useAuthStore((state) => state.logout);
+
+  const normalizeUserRole = (role: string): UserRole => {
+    const normalized = (role || "").trim().toLowerCase();
+    if (normalized === "admin") return "Admin";
+    if (normalized === "teacher") return "Teacher";
+    // Fallback to Teacher for unknown roles to avoid redirect loops.
+    // Consider handling this explicitly (e.g. logout + toast) if your API can return more roles.
+    return "Teacher";
+  };
   
   const loginMutation = useMutation({
     mutationFn: async ({ phone, password }: { phone: string; password: string }) => {
@@ -47,7 +58,7 @@ export function useAuth(): AuthContextType {
       const authUser: AuthUser = {
         id: apiUser.id.toString(),
         name: apiUser.full_name,
-        role: apiUser.role as UserRole,
+        role: normalizeUserRole(apiUser.role),
         avatar: apiUser.avatar || "",
       };
       setToken(token);
@@ -59,15 +70,11 @@ export function useAuth(): AuthContextType {
     await loginMutation.mutateAsync({ phone, password });
   };
 
-  // With Zustand persist, state is hydrated synchronously from localStorage by default.
-  // So we don't need an initial loading state like in the useState version.
-  // isLoading here reflects the login mutation status.
-  
-  return {
+  return useMemo(() => ({
     user,
     login,
     logout,
     isLoading: loginMutation.isPending,
     isAuthenticated: !!user && !!token,
-  };
+  }), [user, token, logout, loginMutation.isPending]);
 }

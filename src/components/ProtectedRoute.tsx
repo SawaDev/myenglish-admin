@@ -1,9 +1,10 @@
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
+import { UserRole } from "@/lib/mockData";
 
 interface ProtectedRouteProps {
-  allowedRoles?: string[];
+  allowedRoles?: UserRole[];
 }
 
 export const ProtectedRoute = ({ allowedRoles }: ProtectedRouteProps) => {
@@ -22,8 +23,8 @@ export const ProtectedRoute = ({ allowedRoles }: ProtectedRouteProps) => {
   }
 
   if (allowedRoles && user && !allowedRoles.includes(user.role)) {
-    if (user.role === 'admin') return <Navigate to="/admin" replace />;
-    if (user.role === 'teacher') return <Navigate to="/teacher" replace />;
+    if (user.role === 'Admin') return <Navigate to="/admin" replace />;
+    if (user.role === 'Teacher') return <Navigate to="/teacher" replace />;
     return <Navigate to="/" replace />;
   }
 

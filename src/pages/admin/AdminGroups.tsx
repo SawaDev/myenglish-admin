@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Users, Plus, Pencil, Eye, Loader2 } from "lucide-react";
@@ -22,6 +22,14 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import api from "@/lib/axios";
+import { z } from "zod";
+
+const groupSchema = z.object({
+  name: z.string().trim().min(1, "Group name is required"),
+  level: z.string().trim().min(1, "Level is required"),
+  main_teacher_id: z.string().trim().min(1, "Main teacher is required"),
+  assistant_teacher_id: z.string().optional(),
+});
 
 interface GroupListItem {
   id: number;
@@ -41,20 +49,47 @@ interface TeacherResponse {
   assistants: Teacher[];
 }
 
-interface CreateGroupData {
+interface LevelOption {
+  id: number;
+  name: string;
+  description?: string;
+}
+
+interface GroupFormData {
   name: string;
   level: string;
   main_teacher_id: string;
-  assistant_teacher_id?: string;
+  assistant_teacher_id: string;
+}
+
+interface GroupDetail {
+  id: number;
+  name: string;
+  level?: string;
+  main_teacher: { id: number; name: string; avatar: string } | null;
+  assistant_teacher: { id: number; name: string; avatar: string } | null;
+  students: any[];
 }
 
 export function AdminGroups() {
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [newGroup, setNewGroup] = useState<CreateGroupData>({
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
+  const [groupForm, setGroupForm] = useState<GroupFormData>({
     name: "",
     level: "",
     main_teacher_id: "",
     assistant_teacher_id: "",
+  });
+  const [touched, setTouched] = useState<{
+    name: boolean;
+    level: boolean;
+    main_teacher_id: boolean;
+    assistant_teacher_id: boolean;
+  }>({
+    name: false,
+    level: false,
+    main_teacher_id: false,
+    assistant_teacher_id: false,
   });
 
   const queryClient = useQueryClient();
@@ -68,6 +103,15 @@ export function AdminGroups() {
     },
   });
 
+  const { data: levelsData, isLoading: levelsLoading } = useQuery({
+    queryKey: ["adminLevels"],
+    queryFn: async () => {
+      const response = await api.get<LevelOption[]>("/admin/levels");
+      return response.data;
+    },
+    enabled: isDialogOpen, // fetch when dialog is open (create/edit)
+  });
+
   const { data: teachersData } = useQuery({
     queryKey: ["adminTeachers"],
     queryFn: async () => {
@@ -76,11 +120,80 @@ export function AdminGroups() {
       );
       return response.data;
     },
-    enabled: isCreateOpen, // Only fetch when dialog is open
+    enabled: isDialogOpen, // Fetch only when dialog is open
   });
 
+  // Fetch group details when editing
+  const { data: groupDetail } = useQuery({
+    queryKey: ["adminGroupDetail", editingGroupId],
+    queryFn: async () => {
+      const response = await api.get<GroupDetail>(
+        `/admin/groups/${editingGroupId}`
+      );
+      return response.data;
+    },
+    enabled: !!editingGroupId && isDialogOpen,
+  });
+
+  useEffect(() => {
+    if (editingGroupId && groupDetail) {
+      setGroupForm({
+        name: groupDetail.name,
+        level: groupDetail.level || "",
+        main_teacher_id: groupDetail.main_teacher?.id.toString() || "",
+        assistant_teacher_id:
+          groupDetail.assistant_teacher?.id.toString() || "",
+      });
+      setTouched({
+        name: false,
+        level: false,
+        main_teacher_id: false,
+        assistant_teacher_id: false,
+      });
+    } else if (!editingGroupId) {
+      // Reset form when creating new
+      setGroupForm({
+        name: "",
+        level: "",
+        main_teacher_id: "",
+        assistant_teacher_id: "",
+      });
+      setTouched({
+        name: false,
+        level: false,
+        main_teacher_id: false,
+        assistant_teacher_id: false,
+      });
+    }
+  }, [editingGroupId, groupDetail, isDialogOpen]);
+
+  const validation = useMemo(
+    () => groupSchema.safeParse(groupForm),
+    [groupForm]
+  );
+  const fieldErrors = useMemo(() => {
+    if (validation.success) {
+      return {
+        name: "",
+        level: "",
+        main_teacher_id: "",
+        assistant_teacher_id: "",
+      };
+    }
+    const msg = (field: keyof GroupFormData) =>
+      validation.error.issues.find((i) => i.path[0] === field)?.message ?? "";
+    return {
+      name: msg("name"),
+      level: msg("level"),
+      main_teacher_id: msg("main_teacher_id"),
+      assistant_teacher_id: msg("assistant_teacher_id"),
+    };
+  }, [validation]);
+
+  const isFormValid = validation.success;
+
   const createGroupMutation = useMutation({
-    mutationFn: async (data: CreateGroupData) => {
+    mutationFn: async (data: GroupFormData) => {
       await api.post("/admin/groups", {
         ...data,
         main_teacher_id: Number(data.main_teacher_id),
@@ -91,17 +204,8 @@ export function AdminGroups() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["adminGroups"] });
-      setIsCreateOpen(false);
-      setNewGroup({
-        name: "",
-        level: "",
-        main_teacher_id: "",
-        assistant_teacher_id: "",
-      });
-      toast({
-        title: "Success",
-        description: "Group created successfully",
-      });
+      closeDialog();
+      toast({ title: "Success", description: "Group created successfully" });
     },
     onError: () => {
       toast({
@@ -112,16 +216,86 @@ export function AdminGroups() {
     },
   });
 
-  const handleCreateGroup = () => {
-    if (!newGroup.name || !newGroup.level || !newGroup.main_teacher_id) {
+  const updateGroupMutation = useMutation({
+    mutationFn: async (data: GroupFormData) => {
+      await api.put(`/admin/groups/${editingGroupId}`, {
+        ...data,
+        main_teacher_id: Number(data.main_teacher_id),
+        assistant_teacher_id: data.assistant_teacher_id
+          ? Number(data.assistant_teacher_id)
+          : null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["adminGroups"] });
+      queryClient.invalidateQueries({
+        queryKey: ["adminGroupDetail", editingGroupId],
+      });
+      closeDialog();
+      toast({ title: "Success", description: "Group updated successfully" });
+    },
+    onError: () => {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to update group",
+      });
+    },
+  });
+
+  const isSaving =
+    createGroupMutation.isPending || updateGroupMutation.isPending;
+  const isSubmitDisabled = !isFormValid || isSaving;
+
+  const handleSubmit = () => {
+    if (!isFormValid) {
+      setTouched({
+        name: true,
+        level: true,
+        main_teacher_id: true,
+        assistant_teacher_id: true,
+      });
       toast({
         variant: "destructive",
         title: "Validation Error",
-        description: "Please fill in all required fields",
+        description: "Please fix the highlighted fields",
       });
       return;
     }
-    createGroupMutation.mutate(newGroup);
+
+    if (editingGroupId) {
+      updateGroupMutation.mutate(groupForm);
+    } else {
+      createGroupMutation.mutate(groupForm);
+    }
+  };
+
+  const openCreateDialog = () => {
+    setEditingGroupId(null);
+    setGroupForm({
+      name: "",
+      level: "",
+      main_teacher_id: "",
+      assistant_teacher_id: "",
+    });
+    setTouched({
+      name: false,
+      level: false,
+      main_teacher_id: false,
+      assistant_teacher_id: false,
+    });
+    setIsDialogOpen(true);
+  };
+
+  const openEditDialog = (id: number) => {
+    setEditingGroupId(id);
+    // Form will be populated by useEffect when data is fetched
+    setIsDialogOpen(true);
+  };
+
+  const closeDialog = () => {
+    setIsDialogOpen(false);
+    setEditingGroupId(null);
   };
 
   const columns = [
@@ -173,7 +347,12 @@ export function AdminGroups() {
               View
             </Button>
           </Link>
-          <Button variant="ghost" size="sm" className="gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1"
+            onClick={() => openEditDialog(group.id)}
+          >
             <Pencil className="w-4 h-4" />
             Edit
           </Button>
@@ -197,16 +376,18 @@ export function AdminGroups() {
           <h1 className="page-title">Groups Management</h1>
           <p className="page-subtitle">Create and manage study groups</p>
         </div>
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2">
+            <Button className="gap-2" onClick={openCreateDialog}>
               <Plus className="w-4 h-4" />
               Create Group
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Create New Group</DialogTitle>
+              <DialogTitle>
+                {editingGroupId ? "Edit Group" : "Create New Group"}
+              </DialogTitle>
             </DialogHeader>
             <div className="space-y-4 pt-4">
               <div className="space-y-2">
@@ -214,41 +395,68 @@ export function AdminGroups() {
                 <Input
                   id="name"
                   placeholder="e.g., Morning Beginners A"
-                  value={newGroup.name}
-                  onChange={(e) =>
-                    setNewGroup({ ...newGroup, name: e.target.value })
-                  }
+                  value={groupForm.name}
+                  onChange={(e) => {
+                    if (!touched.name)
+                      setTouched((t) => ({ ...t, name: true }));
+                    setGroupForm({ ...groupForm, name: e.target.value });
+                  }}
+                  onBlur={() => setTouched((t) => ({ ...t, name: true }))}
+                  aria-invalid={touched.name && !!fieldErrors.name}
+                  disabled={!!isSaving}
                 />
+                {touched.name && fieldErrors.name && (
+                  <p className="text-sm text-destructive">{fieldErrors.name}</p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="level">Level</Label>
                 <Select
-                  value={newGroup.level}
-                  onValueChange={(value) =>
-                    setNewGroup({ ...newGroup, level: value })
-                  }
+                  value={groupForm.level}
+                  onValueChange={(value) => {
+                    if (!touched.level)
+                      setTouched((t) => ({ ...t, level: true }));
+                    setGroupForm({ ...groupForm, level: value });
+                  }}
+                  disabled={!!isSaving}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select level" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Beginner">Beginner</SelectItem>
-                    <SelectItem value="Elementary">Elementary</SelectItem>
-                    <SelectItem value="Intermediate">Intermediate</SelectItem>
-                    <SelectItem value="Upper-Intermediate">
-                      Upper-Intermediate
-                    </SelectItem>
-                    <SelectItem value="Advanced">Advanced</SelectItem>
+                    {levelsLoading && (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        Loading levels...
+                      </div>
+                    )}
+                    {!levelsLoading && (levelsData?.length ?? 0) === 0 && (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        No levels found
+                      </div>
+                    )}
+                    {(levelsData || []).map((lvl) => (
+                      <SelectItem key={lvl.id} value={lvl.name}>
+                        {lvl.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+                {touched.level && fieldErrors.level && (
+                  <p className="text-sm text-destructive">
+                    {fieldErrors.level}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="mainTeacher">Main Teacher</Label>
                 <Select
-                  value={newGroup.main_teacher_id}
-                  onValueChange={(value) =>
-                    setNewGroup({ ...newGroup, main_teacher_id: value })
-                  }
+                  value={groupForm.main_teacher_id}
+                  onValueChange={(value) => {
+                    if (!touched.main_teacher_id)
+                      setTouched((t) => ({ ...t, main_teacher_id: true }));
+                    setGroupForm({ ...groupForm, main_teacher_id: value });
+                  }}
+                  disabled={!!isSaving}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select teacher" />
@@ -264,19 +472,25 @@ export function AdminGroups() {
                     ))}
                   </SelectContent>
                 </Select>
+                {touched.main_teacher_id && fieldErrors.main_teacher_id && (
+                  <p className="text-sm text-destructive">
+                    {fieldErrors.main_teacher_id}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="assistantTeacher">
                   Assistant Teacher (Optional)
                 </Label>
                 <Select
-                  value={newGroup.assistant_teacher_id}
+                  value={groupForm.assistant_teacher_id}
                   onValueChange={(value) =>
-                    setNewGroup({
-                      ...newGroup,
+                    setGroupForm({
+                      ...groupForm,
                       assistant_teacher_id: value === "none" ? "" : value,
                     })
                   }
+                  disabled={!!isSaving}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select assistant" />
@@ -297,16 +511,18 @@ export function AdminGroups() {
               <div className="flex justify-end gap-2 pt-4">
                 <Button
                   variant="outline"
-                  onClick={() => setIsCreateOpen(false)}
+                  onClick={closeDialog}
+                  disabled={!!isSaving}
                 >
                   Cancel
                 </Button>
-                <Button
-                  onClick={handleCreateGroup}
-                  disabled={createGroupMutation.isPending}
-                >
-                  {createGroupMutation.isPending
-                    ? "Creating..."
+                <Button onClick={handleSubmit} disabled={isSubmitDisabled}>
+                  {isSaving
+                    ? editingGroupId
+                      ? "Updating..."
+                      : "Creating..."
+                    : editingGroupId
+                    ? "Update Group"
                     : "Create Group"}
                 </Button>
               </div>

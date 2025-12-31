@@ -1,57 +1,78 @@
-import { Link } from 'react-router-dom';
-import { Users, ClipboardList, Calendar, Award } from 'lucide-react';
-import { StatCard } from '@/components/ui/stat-card';
-import { DataTable } from '@/components/ui/data-table';
-import { LevelBadge } from '@/components/ui/level-badge';
-import { RoleBadge } from '@/components/ui/role-badge';
-import { Button } from '@/components/ui/button';
-import { useAuth } from '@/contexts/AuthContext';
-import { getGroupsByTeacherId, getTeacherById, groups, students, assignments } from '@/lib/mockData';
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { Users, ClipboardList, Award, Loader2 } from "lucide-react";
+import { StatCard } from "@/components/ui/stat-card";
+import { DataTable } from "@/components/ui/data-table";
+import { LevelBadge } from "@/components/ui/level-badge";
+import { RoleBadge } from "@/components/ui/role-badge";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/AuthContext";
+import api from "@/lib/axios";
+
+interface TeacherStats {
+  groups_count: number;
+  total_students: number;
+  active_assignments: number;
+  pending_reviews: number;
+}
+
+interface TeacherGroup {
+  id: number;
+  name: string;
+  level: string;
+  max_students: number;
+  teacher_role: string; // "Main" | "Assistant"
+  student_count: number;
+}
 
 export function TeacherDashboard() {
   const { user } = useAuth();
-  const teacherGroups = getGroupsByTeacherId(user?.id || '');
-  const teacher = getTeacherById(user?.id || '');
-  
-  const totalStudents = teacherGroups.reduce((acc, g) => acc + g.studentIds.length, 0);
-  const totalAssignments = assignments.filter(a => 
-    teacherGroups.some(g => g.id === a.groupId)
-  ).length;
-  const pendingSubmissions = assignments
-    .filter(a => teacherGroups.some(g => g.id === a.groupId))
-    .reduce((acc, a) => acc + a.submissions.filter(s => s.status === 'Submitted').length, 0);
+
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ["teacherStats"],
+    queryFn: async () => {
+      const response = await api.get<TeacherStats>("/teacher/stats");
+      return response.data;
+    },
+  });
+
+  const { data: teacherGroups, isLoading: groupsLoading } = useQuery({
+    queryKey: ["teacherGroups"],
+    queryFn: async () => {
+      const response = await api.get<TeacherGroup[]>("/teacher/groups");
+      return response.data;
+    },
+  });
 
   const columns = [
     {
       key: 'name',
       header: 'Group Name',
-      render: (group: typeof groups[0]) => (
+      render: (group: TeacherGroup) => (
         <span className="font-medium text-foreground">{group.name}</span>
       ),
     },
     {
       key: 'level',
       header: 'Level',
-      render: (group: typeof groups[0]) => <LevelBadge level={group.level} />,
+      render: (group: TeacherGroup) => <LevelBadge level={group.level} />,
     },
     {
       key: 'students',
       header: 'Students',
-      render: (group: typeof groups[0]) => (
-        <span>{group.studentIds.length}/{group.maxStudents}</span>
+      render: (group: TeacherGroup) => (
+        <span>{group.student_count}/{group.max_students}</span>
       ),
     },
     {
       key: 'role',
       header: 'Your Role',
-      render: (group: typeof groups[0]) => (
-        <RoleBadge role={group.mainTeacherId === user?.id ? 'main' : 'assistant'} />
-      ),
+      render: (group: TeacherGroup) => <RoleBadge role={group.teacher_role} />,
     },
     {
       key: 'actions',
       header: '',
-      render: (group: typeof groups[0]) => (
+      render: (group: TeacherGroup) => (
         <Link to={`/teacher/groups/${group.id}`}>
           <Button variant="outline" size="sm">Open Group</Button>
         </Link>
@@ -59,10 +80,20 @@ export function TeacherDashboard() {
     },
   ];
 
+  if (statsLoading || groupsLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[500px]">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fade-in">
       <div className="page-header">
-        <h1 className="page-title">Welcome back, {teacher?.name?.split(' ')[0]}</h1>
+        <h1 className="page-title">
+          Welcome back{user?.name ? `, ${user.name.split(" ")[0]}` : ""}
+        </h1>
         <p className="page-subtitle">Here's what's happening with your groups today</p>
       </div>
 
@@ -70,24 +101,24 @@ export function TeacherDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatCard
           title="My Groups"
-          value={teacherGroups.length}
+          value={stats?.groups_count ?? 0}
           icon={Users}
         />
         <StatCard
           title="Total Students"
-          value={totalStudents}
+          value={stats?.total_students ?? 0}
           icon={Users}
         />
         <StatCard
           title="Active Assignments"
-          value={totalAssignments}
+          value={stats?.active_assignments ?? 0}
           icon={ClipboardList}
         />
         <StatCard
           title="Pending Reviews"
-          value={pendingSubmissions}
+          value={stats?.pending_reviews ?? 0}
           icon={Award}
-          iconClassName={pendingSubmissions > 0 ? 'bg-warning/10' : undefined}
+          iconClassName={(stats?.pending_reviews ?? 0) > 0 ? 'bg-warning/10' : undefined}
         />
       </div>
 
@@ -101,8 +132,9 @@ export function TeacherDashboard() {
         </div>
         <DataTable
           columns={columns}
-          data={teacherGroups}
-          keyExtractor={(group) => group.id}
+          data={teacherGroups || []}
+          keyExtractor={(group) => group.id.toString()}
+          emptyMessage="You haven't been assigned to any groups yet."
         />
       </div>
     </div>

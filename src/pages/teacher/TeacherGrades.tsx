@@ -1,19 +1,69 @@
-import { useState } from 'react';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useAuth } from '@/contexts/AuthContext';
-import { getGroupsByTeacherId, getStudentsByGroupId, Student } from '@/lib/mockData';
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import api from "@/lib/axios";
+
+interface TeacherGroup {
+  id: number;
+  name: string;
+  level: string;
+  max_students: number;
+  teacher_role: string;
+  student_count: number;
+}
+
+interface GroupGradeSummary {
+  id: number;
+  name: string;
+  avatar_url?: string;
+  last_assignment_score: number;
+  attendance_score: number;
+  average_assignment: number;
+}
 
 export function TeacherGrades() {
-  const { user } = useAuth();
-  const teacherGroups = getGroupsByTeacherId(user?.id || '');
-  const [selectedGroupId, setSelectedGroupId] = useState<string>(teacherGroups[0]?.id || '');
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("");
+  const selectedGroupIdNum = Number(selectedGroupId);
 
-  const selectedGroup = teacherGroups.find(g => g.id === selectedGroupId);
-  const students = selectedGroup ? getStudentsByGroupId(selectedGroup.id) : [];
+  const { data: teacherGroups, isLoading: groupsLoading } = useQuery({
+    queryKey: ["teacherGroups"],
+    queryFn: async () => {
+      const response = await api.get<TeacherGroup[]>("/teacher/groups");
+      return response.data;
+    },
+  });
 
-  // Sort students by total score descending
-  const sortedStudents = [...students].sort((a, b) => b.totalScore - a.totalScore);
+  useEffect(() => {
+    if (selectedGroupId) return;
+    const first = teacherGroups?.[0];
+    if (first) setSelectedGroupId(first.id.toString());
+  }, [teacherGroups, selectedGroupId]);
+
+  const selectedGroup = useMemo(() => {
+    if (!teacherGroups || !selectedGroupId) return undefined;
+    return teacherGroups.find((g) => g.id.toString() === selectedGroupId);
+  }, [teacherGroups, selectedGroupId]);
+
+  const { data: grades, isLoading: gradesLoading } = useQuery({
+    queryKey: ["teacherGroupGrades", selectedGroupIdNum],
+    queryFn: async () => {
+      const response = await api.get<GroupGradeSummary[]>(`/teacher/groups/${selectedGroupIdNum}/grades`);
+      return response.data;
+    },
+    enabled: Number.isFinite(selectedGroupIdNum) && !!selectedGroupId,
+  });
+
+  // Rank by average_assignment desc, then attendance_score desc
+  const sorted = useMemo(() => {
+    const list = [...(grades || [])];
+    list.sort((a, b) => {
+      if (b.average_assignment !== a.average_assignment) return b.average_assignment - a.average_assignment;
+      return b.attendance_score - a.attendance_score;
+    });
+    return list;
+  }, [grades]);
 
   return (
     <div className="animate-fade-in">
@@ -28,13 +78,13 @@ export function TeacherGrades() {
           <label className="text-sm font-medium text-muted-foreground mb-2 block">
             Select Group
           </label>
-          <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
+          <Select value={selectedGroupId} onValueChange={setSelectedGroupId} disabled={groupsLoading}>
             <SelectTrigger>
-              <SelectValue placeholder="Select a group" />
+              <SelectValue placeholder={groupsLoading ? "Loading groups..." : "Select a group"} />
             </SelectTrigger>
             <SelectContent>
-              {teacherGroups.map((group) => (
-                <SelectItem key={group.id} value={group.id}>
+              {(teacherGroups || []).map((group) => (
+                <SelectItem key={group.id} value={group.id.toString()}>
                   {group.name}
                 </SelectItem>
               ))}
@@ -49,7 +99,11 @@ export function TeacherGrades() {
           {selectedGroup?.name || 'Select a group'} - Grade Overview
         </h2>
 
-        {students.length === 0 ? (
+        {gradesLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-7 h-7 animate-spin text-primary" />
+          </div>
+        ) : (sorted?.length ?? 0) === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             {selectedGroupId ? 'No students in this group' : 'Please select a group'}
           </div>
@@ -65,19 +119,19 @@ export function TeacherGrades() {
                     Student
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-semibold text-muted-foreground bg-muted/50">
-                    Assignment Score
+                    Last Assignment
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-semibold text-muted-foreground bg-muted/50">
                     Attendance Score
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-semibold text-muted-foreground bg-muted/50">
-                    Total
+                    Avg Assignment
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {sortedStudents.map((student, index) => (
-                  <tr key={student.id}>
+                {sorted.map((row, index) => (
+                  <tr key={row.id}>
                     <td className="px-4 py-3 text-sm border-t border-border">
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold ${
                         index === 0 ? 'bg-yellow-100 text-yellow-700' :
@@ -91,26 +145,20 @@ export function TeacherGrades() {
                     <td className="px-4 py-3 text-sm border-t border-border">
                       <div className="flex items-center gap-3">
                         <Avatar className="w-8 h-8">
-                          <AvatarImage src={student.avatar} alt={student.name} />
-                          <AvatarFallback>{student.name.charAt(0)}</AvatarFallback>
+                          <AvatarImage src={row.avatar_url} alt={row.name} />
+                          <AvatarFallback>{row.name?.charAt(0) ?? "?"}</AvatarFallback>
                         </Avatar>
-                        <span className="font-medium">{student.name}</span>
+                        <span className="font-medium">{row.name}</span>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm border-t border-border">
-                      {Math.round(student.totalScore * 0.7)}
+                      {row.last_assignment_score}
                     </td>
                     <td className="px-4 py-3 text-sm border-t border-border">
-                      {Math.round(student.attendancePercent * 0.3)}
+                      {row.attendance_score}
                     </td>
                     <td className="px-4 py-3 text-sm border-t border-border">
-                      <span className={`font-semibold text-lg ${
-                        student.totalScore >= 80 ? 'text-success' : 
-                        student.totalScore >= 60 ? 'text-warning' : 
-                        'text-destructive'
-                      }`}>
-                        {student.totalScore}
-                      </span>
+                      {row.average_assignment}
                     </td>
                   </tr>
                 ))}

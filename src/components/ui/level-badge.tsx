@@ -2,11 +2,11 @@ import { cn } from '@/lib/utils';
 import { Level } from '@/lib/mockData';
 
 interface LevelBadgeProps {
-  level: Level;
+  level: Level | string;
   className?: string;
 }
 
-const levelColors: Record<Level, string> = {
+const levelColors: Record<string, string> = {
   'Beginner': 'bg-success/10 text-success',
   'Elementary': 'bg-primary/10 text-primary',
   'Intermediate': 'bg-warning/10 text-warning',
@@ -18,7 +18,7 @@ export function LevelBadge({ level, className }: LevelBadgeProps) {
   return (
     <span className={cn(
       'level-badge',
-      levelColors[level],
+      levelColors[level] || 'bg-muted text-foreground',
       className
     )}>
       {level}
